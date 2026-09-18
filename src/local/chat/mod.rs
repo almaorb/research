@@ -10,7 +10,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -1814,7 +1814,16 @@ struct PendingPermission {
 /// so allow. File edits DENY: with a permission tool configured the CLI
 /// *delegates* plan mode's edit block to it (verified: an allow here creates
 /// files mid-plan), so this branch IS the plan-mode safety, not dead defense.
-fn plan_auto_policy(tool_name: &str, tool_input: &Value) -> Option<PermissionDecision> {
+///
+/// The one place an edit is allowed: `docs/` of `design_records_worktree`,
+/// the session's worktree when the Alma IDE supervises the session (`None`
+/// otherwise). The plan and the design records the researcher writes there
+/// are what the approval commits, so the builder's phases are cut with them.
+fn plan_auto_policy(
+    tool_name: &str,
+    tool_input: &Value,
+    design_records_worktree: Option<&Path>,
+) -> Option<PermissionDecision> {
     if tool_name == "Bash" {
         let readonly = tool_input
             .get("command")
@@ -1840,12 +1849,54 @@ fn plan_auto_policy(tool_name: &str, tool_input: &Value) -> Option<PermissionDec
         "WebFetch" | "WebSearch" => Some(PermissionDecision::Allow {
             updated_input: Some(tool_input.clone()),
         }),
-        "Write" | "Edit" | "MultiEdit" | "NotebookEdit" => Some(PermissionDecision::deny(
-            "File edits are blocked in plan mode. Present your plan with the \
-             ExitPlanMode tool so the user can approve it before implementation.",
-        )),
+        "Write" | "Edit" | "MultiEdit" | "NotebookEdit" => {
+            let edited = tool_input
+                .get("file_path")
+                .or_else(|| tool_input.get("notebook_path"))
+                .and_then(Value::as_str);
+            let is_design_record = match (design_records_worktree, edited) {
+                (Some(worktree), Some(edited)) => is_design_record(worktree, Path::new(edited)),
+                _ => false,
+            };
+            if is_design_record {
+                return Some(PermissionDecision::Allow {
+                    updated_input: Some(tool_input.clone()),
+                });
+            }
+            Some(PermissionDecision::deny(
+                if design_records_worktree.is_some() {
+                    "File edits are blocked in plan mode, except under docs/ of this worktree, \
+                 where the plan and its design records go. Present your plan with the \
+                 ExitPlanMode tool so the user can approve it before implementation."
+                } else {
+                    "File edits are blocked in plan mode. Present your plan with the \
+                 ExitPlanMode tool so the user can approve it before implementation."
+                },
+            ))
+        }
         _ => None,
     }
+}
+
+/// Whether `edited` is a file under `<worktree>/docs/`. Resolved lexically —
+/// a relative path against the worktree, `.` and `..` folded — so `docs/../src`
+/// is `src` and a sibling whose name merely starts with the worktree's is not
+/// inside it; the file need not exist yet, since a Write creates it.
+fn is_design_record(worktree: &Path, edited: &Path) -> bool {
+    let mut resolved = PathBuf::new();
+    for component in worktree.join(edited).components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                resolved.pop();
+            }
+            other => resolved.push(other),
+        }
+    }
+    let docs = worktree.join("docs");
+    resolved
+        .strip_prefix(&docs)
+        .is_ok_and(|inside| inside.components().next().is_some())
 }
 
 /// The control API port of the editor most recently heard from, learnt from
@@ -2961,7 +3012,23 @@ impl ChatHost {
         // Tier 1 — Plan has a small automatic read/deny policy. Manual and
         // Accept edits surface whatever Claude delegated to the bridge.
         if plan_mode {
-            if let Some(decision) = plan_auto_policy(tool_name, &tool_input) {
+            // Under the Alma IDE the session's worktree is where the approval
+            // commits the design records from; its `docs/` is the researcher's
+            // to write. Anywhere else, plan mode has nowhere to allow an edit.
+            let design_records_worktree = if alma_supervisor_available() {
+                let session = Store::open()?
+                    .get_chat_session(session_id)?
+                    .ok_or_else(|| anyhow!("chat session not found"))?;
+                Some(crate::local::git::session_worktree_path(
+                    &session.project_id,
+                    &session.id,
+                ))
+            } else {
+                None
+            };
+            if let Some(decision) =
+                plan_auto_policy(tool_name, &tool_input, design_records_worktree.as_deref())
+            {
                 return Ok(decision);
             }
         }
@@ -9040,51 +9107,144 @@ mod bridge_tests {
         // Read-only Bash: allowed without a card.
         assert!(allow(plan_auto_policy(
             "Bash",
-            &json!({"command": "orx runs 2>&1 | head -50"})
+            &json!({"command": "orx runs 2>&1 | head -50"}),
+            None
         )));
         // The Alma IDE's research tools look; the ones that act are a card.
         assert!(allow(plan_auto_policy(
             "mcp__alma__rag_search",
-            &json!({"query": "where is a phase verified"})
+            &json!({"query": "where is a phase verified"}),
+            None
         )));
         assert!(allow(plan_auto_policy(
             "mcp__alma__memory_remember",
-            &json!({"title": "t", "body": "b"})
+            &json!({"title": "t", "body": "b"}),
+            None
         )));
-        assert!(plan_auto_policy("mcp__alma__terminal_write", &json!({"text": "rm"})).is_none());
+        assert!(
+            plan_auto_policy("mcp__alma__terminal_write", &json!({"text": "rm"}), None).is_none()
+        );
         assert!(allow(plan_auto_policy(
             "Bash",
-            &json!({"command": "git show origin/b:f.py | head -100"})
+            &json!({"command": "git show origin/b:f.py | head -100"}),
+            None
         )));
         // Gray-area Bash: the user's call — card.
-        assert!(plan_auto_policy("Bash", &json!({"command": "cargo metadata"})).is_none());
-        assert!(plan_auto_policy("Bash", &json!({"command": "rm -rf /"})).is_none());
+        assert!(plan_auto_policy("Bash", &json!({"command": "cargo metadata"}), None).is_none());
+        assert!(plan_auto_policy("Bash", &json!({"command": "rm -rf /"}), None).is_none());
         // Read-only research tools: allowed (plan mode denies them natively).
         assert!(allow(plan_auto_policy(
             "WebFetch",
-            &json!({"url": "https://example.com"})
+            &json!({"url": "https://example.com"}),
+            None
         )));
-        assert!(allow(plan_auto_policy("WebSearch", &json!({"query": "x"}))));
+        assert!(allow(plan_auto_policy(
+            "WebSearch",
+            &json!({"query": "x"}),
+            None
+        )));
         // AskUserQuestion: tier 2, but its card is the QUESTION itself, held
         // mid-turn (see `request_permission`) — auto-allowing would run the
         // tool headless, which returns no answer, so the model would guess
         // instead of blocking on the user.
         assert!(plan_auto_policy(
             "AskUserQuestion",
-            &json!({"questions": [{"question": "Which?", "options": []}]})
+            &json!({"questions": [{"question": "Which?", "options": []}]}),
+            None
         )
         .is_none());
         // File edits: denied — this branch IS plan mode's edit block once a
         // permission tool is configured.
         for tool in ["Write", "Edit", "MultiEdit", "NotebookEdit"] {
             assert!(
-                deny(plan_auto_policy(tool, &json!({"file_path": "/x"}))),
+                deny(plan_auto_policy(tool, &json!({"file_path": "/x"}), None)),
                 "{tool}"
             );
         }
         // ExitPlanMode and unknown tools: the user's call — card.
-        assert!(plan_auto_policy("ExitPlanMode", &json!({"plan": "x"})).is_none());
-        assert!(plan_auto_policy("mcp__foo__bar", &json!({})).is_none());
+        assert!(plan_auto_policy("ExitPlanMode", &json!({"plan": "x"}), None).is_none());
+        assert!(plan_auto_policy("mcp__foo__bar", &json!({}), None).is_none());
+    }
+
+    #[test]
+    fn plan_mode_writes_the_design_records() {
+        let allow =
+            |d: Option<PermissionDecision>| matches!(d, Some(PermissionDecision::Allow { .. }));
+        let deny =
+            |d: Option<PermissionDecision>| matches!(d, Some(PermissionDecision::Deny { .. }));
+        let worktree = Path::new("/data/worktrees/project/session");
+        let under = |worktree: Option<&Path>, tool: &str, path: &str| {
+            let key = if tool == "NotebookEdit" {
+                "notebook_path"
+            } else {
+                "file_path"
+            };
+            plan_auto_policy(tool, &json!({ key: path }), worktree)
+        };
+
+        // Under the Alma IDE, docs/ of the session's worktree is the
+        // researcher's: the plan and its design records are written there.
+        for tool in ["Write", "Edit", "MultiEdit", "NotebookEdit"] {
+            assert!(
+                allow(under(
+                    Some(worktree),
+                    tool,
+                    "/data/worktrees/project/session/docs/plan.md"
+                )),
+                "{tool}"
+            );
+        }
+        assert!(allow(under(
+            Some(worktree),
+            "Write",
+            "/data/worktrees/project/session/docs/decisions/0001-storage.md"
+        )));
+        assert!(allow(under(Some(worktree), "Write", "docs/plan.md")));
+        assert!(allow(under(
+            Some(worktree),
+            "Write",
+            "/data/worktrees/project/session/src/../docs/plan.md"
+        )));
+
+        // The rest of the tree stays plan mode's: sources, the worktree root,
+        // docs/ itself, a path that climbs out of docs/, a sibling worktree
+        // whose name starts the same way, and another repository's docs/.
+        for path in [
+            "/data/worktrees/project/session/src/main.rs",
+            "/data/worktrees/project/session/plan.md",
+            "/data/worktrees/project/session/docs",
+            "/data/worktrees/project/session/docs/",
+            "/data/worktrees/project/session/docs/../src/main.rs",
+            "/data/worktrees/project/session-2/docs/plan.md",
+            "/data/worktrees/project/sessiondocs/plan.md",
+            "/elsewhere/docs/plan.md",
+            "src/main.rs",
+        ] {
+            assert!(deny(under(Some(worktree), "Write", path)), "{path}");
+        }
+        assert!(deny(plan_auto_policy(
+            "Write",
+            &json!({"content": "no path"}),
+            Some(worktree)
+        )));
+        let denial = under(
+            Some(worktree),
+            "Write",
+            "/data/worktrees/project/session/src/a.rs",
+        );
+        match denial {
+            Some(PermissionDecision::Deny { message }) => {
+                assert!(message.contains("docs/"), "{message}")
+            }
+            other => panic!("expected a denial, got {other:?}"),
+        }
+
+        // Outside the editor there is no worktree to write into.
+        assert!(deny(under(
+            None,
+            "Write",
+            "/data/worktrees/project/session/docs/plan.md"
+        )));
     }
 
     fn answer(answers: &[&str], approve: bool, note: Option<&str>) -> PromptAnswer {
