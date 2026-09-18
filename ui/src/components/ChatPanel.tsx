@@ -40,6 +40,7 @@ import {
   FolderOpen,
   Globe,
   Gauge,
+  Hammer,
   HelpCircle,
   Lightbulb,
   MessageSquareQuote,
@@ -3308,6 +3309,20 @@ function renderParts(
           {part.text}
         </div>,
       );
+    else if (part.type === "notice")
+      // A line from the system, not the model: what happened outside the
+      // conversation (a plan handed to the Alma IDE's builder, say).
+      rendered.push(
+        <div
+          key={part.id}
+          dir="auto"
+          role="status"
+          className="msg-notice my-2 flex items-center gap-2 text-sm text-subtext"
+        >
+          <Hammer size={14} className="shrink-0 text-accent-blue" />
+          <span className="whitespace-pre-wrap wrap-anywhere">{part.text}</span>
+        </div>,
+      );
     else if (part.type === "prompt" && part.prompt)
       rendered.push(
         <PromptCard
@@ -4961,6 +4976,24 @@ export function ChatPanel({
     }
     return null;
   }, [messages]);
+  // A plan approved into the Alma IDE's builder: the strip stays, buttonless,
+  // saying where the plan went, until the person sends the next message — the
+  // build happens in the editor's terminal, so nothing in this transcript
+  // would otherwise say so once the card has collapsed.
+  const approvedPlan = useMemo(() => {
+    if (pendingPlan) return null;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "user" && !messages[i].id.startsWith(LOCAL_PREFIX)) return null;
+      for (const part of messages[i].parts) {
+        if (part.type !== "prompt" || part.prompt?.kind !== "plan") continue;
+        if (part.prompt.approved && part.prompt.resumeMode === "supervised") {
+          return { promptId: part.id, plan: part.prompt.plan ?? "", synthesized: !!part.prompt.synthesized };
+        }
+        return null;
+      }
+    }
+    return null;
+  }, [messages, pendingPlan]);
 
   // The newest ANSWERABLE unresolved question card's part id: typed composer
   // text answers IT as a custom answer, instead of racing the held turn with
@@ -6148,6 +6181,20 @@ export function ChatPanel({
             in when it arrives (effect above). The transcript status covers
             the interim ("Waiting for your input…" for a beat until the old
             card's resolve broadcast lands, then Working…). */}
+          {approvedPlan && (
+            <PlanStrip
+              synthesized={approvedPlan.synthesized}
+              agentLabel={
+                activeSession ? HARNESS_LABELS[activeSession.harness] : m.chat_the_agent()
+              }
+              showResumeModes={false}
+              approved
+              onView={(intent) => openPlan?.(approvedPlan.plan, approvedPlan.promptId, intent)}
+              onApprove={() => {}}
+              onReject={() => {}}
+              onRevise={() => {}}
+            />
+          )}
           {pendingPlan && !(revisingPlan && pendingPlan.promptId === revisingPlan.promptId) && (
             <PlanStrip
               synthesized={pendingPlan.synthesized}

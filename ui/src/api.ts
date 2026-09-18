@@ -1948,6 +1948,10 @@ export interface ChatPrompt {
   approved?: boolean;
   note?: string;
   annotations?: ChatTextAnnotation[];
+  /** Plan cards: the mode the approval resumed under — `supervised` when the
+   * plan went to the Alma IDE's builder, which the strip keeps saying after
+   * the card has collapsed. */
+  resumeMode?: string;
   /** Backend resume routing id. Presence marks a HELD mid-turn card (the
    * turn is blocked open waiting on this answer); absent on end-turn cards. */
   nativeId?: string;
@@ -1955,7 +1959,7 @@ export interface ChatPrompt {
 
 export interface ChatPart {
   id: string;
-  type: string; // text | reasoning | tool | prompt | image | steer
+  type: string; // text | reasoning | tool | prompt | image | steer | notice
   phase?: "commentary" | "final_answer";
   text?: string;
   /** Original file name for an `image` (attachment) part, when known. */

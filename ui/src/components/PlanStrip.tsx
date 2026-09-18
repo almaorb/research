@@ -1,6 +1,6 @@
 import { m } from "../paraglide/messages.js";
 import { ltr } from "../i18n";
-import { ChevronDown, CornerDownLeft, ScrollText } from "lucide-react";
+import { ChevronDown, CornerDownLeft, Hammer, ScrollText } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { tabOpenGestureHandlers, type TabOpenIntent } from "../tabPreview";
 import { Button, MenuItem } from "./ui";
@@ -23,9 +23,10 @@ const PROMPT_ACTIONS_CLASS_NAME = "prompt-actions plan-strip-actions flex flex-w
  *    the app has no story for partial (edits-only) approval.
  *  - Open plan: link in the title row → the end-pane plan tab.
  *  - Approve and build (primary when `supervised`): inside the Alma IDE the
- *    plan goes to its supervisor, which runs the phases through this session
- *    one at a time with checks in between; the auto/bypass accepts move to
- *    the caret menu. */
+ *    plan goes to its supervisor, which builds it with Claude Code in a
+ *    terminal of the editor, phase by phase with checks in between; the
+ *    auto/bypass accepts move to the caret menu. Once taken, the strip stays
+ *    as `approved` — no buttons, just where the build went. */
 export function PlanStrip({
   synthesized,
   agentLabel,
@@ -33,6 +34,7 @@ export function PlanStrip({
   onApprove,
   showResumeModes,
   supervised = false,
+  approved = false,
   onReject,
   onRevise,
 }: {
@@ -48,6 +50,9 @@ export function PlanStrip({
   showResumeModes: boolean;
   /** The Alma IDE's supervisor is there to take the plan. */
   supervised?: boolean;
+  /** The supervisor took the plan: it is being built in the editor's
+   * terminal, so the strip only says so and keeps the plan link. */
+  approved?: boolean;
   onReject: () => void;
   /** Revision feedback; always non-empty (a blank submit sends a generic
    * "please revise" — note presence is what distinguishes revise from
@@ -85,13 +90,22 @@ export function PlanStrip({
   };
 
   return (
-    <div className="plan-strip relative w-full mt-0 mx-0 mb-2.5 py-[11px] px-[13px] flex flex-col items-stretch gap-2.5 border border-border border-s-[3px] border-s-accent-blue rounded-md bg-surface shadow-plan">
+    <div
+      className="plan-strip relative w-full mt-0 mx-0 mb-2.5 py-[11px] px-[13px] flex flex-col items-stretch gap-2.5 border border-border border-s-[3px] border-s-accent-blue rounded-md bg-surface shadow-plan"
+      data-approved={approved || undefined}
+    >
       <div className="plan-strip-info flex items-baseline gap-2 min-w-0">
-        <ScrollText size={14} className="plan-strip-icon text-accent-blue shrink-0 self-center" />
+        {approved ? (
+          <Hammer size={14} className="plan-strip-icon text-accent-blue shrink-0 self-center" />
+        ) : (
+          <ScrollText size={14} className="plan-strip-icon text-accent-blue shrink-0 self-center" />
+        )}
         <span dir="auto" className="plan-strip-title text-sm font-semibold whitespace-nowrap">
-          {synthesized
-            ? m.plan_strip_agent_ready({ agent: ltr(agentLabel) })
-            : m.plan_strip_agent_proposed({ agent: ltr(agentLabel) })}
+          {approved
+            ? m.plan_strip_approved_building()
+            : synthesized
+              ? m.plan_strip_agent_ready({ agent: ltr(agentLabel) })
+              : m.plan_strip_agent_proposed({ agent: ltr(agentLabel) })}
         </span>
         <button
           className="plan-strip-open ms-auto p-0 border-0 bg-none bg-transparent text-accent-blue text-sm cursor-pointer whitespace-nowrap shrink-0 [&:hover]:underline"
@@ -100,7 +114,7 @@ export function PlanStrip({
           {m.plan_strip_open_plan()}
         </button>
       </div>
-      {revising ? (
+      {approved ? null : revising ? (
         <>
           <textarea
             dir="auto"
