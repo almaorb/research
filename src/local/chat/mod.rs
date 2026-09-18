@@ -1811,9 +1811,13 @@ struct PendingPermission {
 /// before the permission tool ever fires; this keeps behavior right if the
 /// hook wasn't wired. WebFetch/WebSearch are read-only research that plan mode
 /// denies natively (verified on claude 2.1.197) — exactly what planning needs,
-/// so allow. File edits DENY: with a permission tool configured the CLI
-/// *delegates* plan mode's edit block to it (verified: an allow here creates
-/// files mid-plan), so this branch IS the plan-mode safety, not dead defense.
+/// so allow. Under the Alma IDE, WebFetch DENIES: the research session reads
+/// pages in the editor's browser, where vendor sites open as they do for a
+/// person (the harness also keeps the tool from the model, see
+/// `alma_disallowed_tools`); WebSearch stays allowed. File edits DENY: with a
+/// permission tool configured the CLI *delegates* plan mode's edit block to
+/// it (verified: an allow here creates files mid-plan), so this branch IS the
+/// plan-mode safety, not dead defense.
 ///
 /// The one place an edit is allowed: `docs/` of `design_records_worktree`,
 /// the session's worktree when the Alma IDE supervises the session (`None`
@@ -1838,14 +1842,22 @@ fn plan_auto_policy(
         return None;
     }
     // The Alma IDE's research tools read the codebase index, the memory,
-    // the browser and the terminal screen; the ones that type, click or
-    // navigate for the human stay a card.
+    // the vault and the terminal screen, and drive the browser to a page;
+    // the ones that type or click on a page for the human stay a card.
     if tool_name.starts_with("mcp__alma__") && alma_tool_is_research(tool_name) {
         return Some(PermissionDecision::Allow {
             updated_input: Some(tool_input.clone()),
         });
     }
+    // `design_records_worktree` is known exactly when the Alma IDE
+    // supervises the session — the editor whose browser reads the web.
+    let under_alma = design_records_worktree.is_some();
     match tool_name {
+        "WebFetch" if under_alma => Some(PermissionDecision::deny(
+            "Read pages in the Alma browser: browser_new_tab the URL in a tab of your own, \
+             then browser_read or browser_eval. WebFetch is blocked by most vendor sites and \
+             is off here.",
+        )),
         "WebFetch" | "WebSearch" => Some(PermissionDecision::Allow {
             updated_input: Some(tool_input.clone()),
         }),
@@ -1931,9 +1943,15 @@ pub fn alma_supervisor_available() -> bool {
     alma_control_port().is_some()
 }
 
-/// Which `mcp__alma__*` tools only look. `memory_remember` is here too: a
-/// note saved mid-research is the point of researching, not an edit to the
-/// tree the plan is about.
+/// Which `mcp__alma__*` tools a researcher may call without a card: the
+/// ones that look, and the ones that move the browser to something to look
+/// at. Opening, navigating, scrolling and evaluating in a tab is how the
+/// research session reads the web (see `SYSTEM_PROMPT.md`, "Reading the
+/// web"), so those are as card-less as `browser_read`; the tools that act
+/// *on* a page for the human — click, fill, key, mouse — and `terminal_write`
+/// stay a card. `memory_remember` and `vault_add` are here too: a note or a
+/// document saved mid-research is the point of researching, not an edit to
+/// the tree the plan is about.
 fn alma_tool_is_research(tool_name: &str) -> bool {
     matches!(
         tool_name.trim_start_matches("mcp__alma__"),
@@ -1950,6 +1968,21 @@ fn alma_tool_is_research(tool_name: &str) -> bool {
             | "browser_console"
             | "browser_audit"
             | "browser_screenshot"
+            | "browser_new_tab"
+            | "browser_navigate"
+            | "browser_eval"
+            | "browser_scroll"
+            | "browser_back"
+            | "browser_forward"
+            | "browser_close_tab"
+            | "browser_switch_tab"
+            | "browser_reload"
+            | "vault_list"
+            | "vault_search"
+            | "vault_add"
+            | "catalog_match"
+            | "research_read"
+            | "research_sessions"
             | "terminal_list"
             | "terminal_read"
             | "bus_read"
@@ -9244,6 +9277,74 @@ mod bridge_tests {
             None,
             "Write",
             "/data/worktrees/project/session/docs/plan.md"
+        )));
+    }
+
+    #[test]
+    fn research_reads_the_web_in_the_browser() {
+        let allow =
+            |d: Option<PermissionDecision>| matches!(d, Some(PermissionDecision::Allow { .. }));
+        let worktree = Path::new("/data/worktrees/project/session");
+        let under_alma = |tool: &str| plan_auto_policy(tool, &json!({}), Some(worktree));
+
+        // Under the Alma IDE, getting to a page and reading it is card-less:
+        // a tab of the researcher's own, navigation within it, scrolling,
+        // evaluation, and the tab's disposal.
+        for tool in [
+            "mcp__alma__browser_new_tab",
+            "mcp__alma__browser_navigate",
+            "mcp__alma__browser_eval",
+            "mcp__alma__browser_scroll",
+            "mcp__alma__browser_back",
+            "mcp__alma__browser_forward",
+            "mcp__alma__browser_close_tab",
+            "mcp__alma__browser_switch_tab",
+            "mcp__alma__browser_reload",
+            "mcp__alma__browser_read",
+            "mcp__alma__browser_screenshot",
+            "mcp__alma__vault_list",
+            "mcp__alma__vault_search",
+            "mcp__alma__vault_add",
+            "mcp__alma__catalog_match",
+            "mcp__alma__research_read",
+            "mcp__alma__research_sessions",
+        ] {
+            assert!(allow(under_alma(tool)), "{tool}");
+        }
+        // Acting on a page for the human, or typing into a terminal, is a card.
+        for tool in [
+            "mcp__alma__browser_click",
+            "mcp__alma__browser_fill",
+            "mcp__alma__browser_key",
+            "mcp__alma__browser_mouse",
+            "mcp__alma__terminal_write",
+        ] {
+            assert!(under_alma(tool).is_none(), "{tool}");
+        }
+
+        // WebFetch is off inside the editor, and the denial says where to
+        // read instead; WebSearch stays.
+        match plan_auto_policy(
+            "WebFetch",
+            &json!({"url": "https://example.com"}),
+            Some(worktree),
+        ) {
+            Some(PermissionDecision::Deny { message }) => {
+                assert!(message.contains("browser_new_tab"), "{message}");
+                assert!(message.contains("WebFetch is blocked"), "{message}");
+            }
+            other => panic!("expected a denial, got {other:?}"),
+        }
+        assert!(allow(plan_auto_policy(
+            "WebSearch",
+            &json!({"query": "x"}),
+            Some(worktree)
+        )));
+        // Outside the editor there is no browser; WebFetch is what there is.
+        assert!(allow(plan_auto_policy(
+            "WebFetch",
+            &json!({"url": "https://example.com"}),
+            None
         )));
     }
 

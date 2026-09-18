@@ -1069,6 +1069,18 @@ pub(crate) fn alma_mcp_server() -> Option<serde_json::Value> {
     }))
 }
 
+/// The tools kept from the model when this `orx up` was started by the
+/// editor, as a `--disallowed-tools` value. `WebFetch` is off there: the
+/// session reads pages in the editor's browser (`SYSTEM_PROMPT.md`, "Reading
+/// the web"), where vendor sites open as they do for a person, while a
+/// scripted fetch is blocked by most of them. Withheld at spawn so the tool
+/// never reaches the model, rather than denied at the gate call by call; the
+/// plan-mode policy denies it too, with the same pointer, should a CLI
+/// ignore the flag. WebSearch stays.
+pub(crate) fn alma_disallowed_tools() -> Option<&'static str> {
+    alma_mcp_server().map(|_| "WebFetch")
+}
+
 /// Session reasoning id → Claude's `--effort` value.
 ///
 /// Only the `default` sentinel (and an absent level) send nothing; every other
@@ -2380,6 +2392,7 @@ mod tests {
             std::env::remove_var("ALMA_CONTROL_PORT");
         }
         assert!(alma_mcp_server().is_none());
+        assert!(alma_disallowed_tools().is_none());
         unsafe {
             std::env::set_var("ALMA_MCP_SERVER", "/tmp/alma-browser-mcp.mjs");
             std::env::set_var("ALMA_CONTROL_PORT", "7999");
@@ -2387,6 +2400,9 @@ mod tests {
         let alma = alma_mcp_server().expect("configured by the editor");
         assert_eq!(alma["args"][0], "/tmp/alma-browser-mcp.mjs");
         assert_eq!(alma["env"]["ALMA_BROWSER_API"], "http://127.0.0.1:7999");
+        // Inside the editor the model never sees WebFetch: pages are read
+        // in the browser.
+        assert_eq!(alma_disallowed_tools(), Some("WebFetch"));
         unsafe {
             for (name, value) in saved {
                 match value {

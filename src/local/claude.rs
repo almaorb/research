@@ -44,8 +44,8 @@ use tokio::sync::{mpsc, oneshot, Mutex, Notify};
 
 use crate::error::{anyhow, Result};
 use crate::local::harness::claude::{
-    alma_mcp_server, claude_permission_mode, find_claude, uses_permission_bridge, write_mcp_config,
-    write_plan_settings, GateBridge,
+    alma_disallowed_tools, alma_mcp_server, claude_permission_mode, find_claude,
+    uses_permission_bridge, write_mcp_config, write_plan_settings, GateBridge,
 };
 use crate::local::harness::{HarnessAuthState, PermissionMode};
 use crate::local::native_store::NativeStore;
@@ -559,6 +559,9 @@ async fn spawn_client(spec: &SpawnSpec, auth_generation: u64) -> Result<Arc<Clau
             }
             Err(e) => eprintln!("orx up: alma mcp server not configured: {e}"),
         }
+    }
+    if let Some(tools) = alma_disallowed_tools() {
+        cmd.args(["--disallowed-tools", tools]);
     }
     crate::local::chat::prepare_env(&mut cmd);
     let native_store = spec.config.native_store;
