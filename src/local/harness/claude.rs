@@ -2332,7 +2332,10 @@ mod tests {
         assert!(!message.contains("in this session"));
 
         let notice = approved_plan_notice(7, 3);
-        assert_eq!(notice, "Approved → run 7, 3 phases. Building in the Zed terminal.");
+        assert_eq!(
+            notice,
+            "Approved → run 7, 3 phases. Building in the Zed terminal."
+        );
     }
 
     #[test]
