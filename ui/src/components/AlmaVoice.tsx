@@ -4,11 +4,12 @@
 // the editor; this is only its face here, through `/api/alma/*`. It renders
 // nothing outside the editor.
 //
-// The mode is the orb's, chosen from the menu, and the mic opens in whichever
-// is chosen: Transcribe types into this composer, Plan sends into the session
-// on screen and reads the replies aloud, Assistant and Build are the orb's
-// own business (the phone, the mailbox, the terminal) and only borrow the
-// button.
+// The mode is the orb's. This composer offers the two that talk to the page:
+// Transcribe types into this composer, Plan sends into the session on screen
+// and reads the replies aloud. Assistant is the dock orb's own business (the
+// phone, the mailbox) and is not offered here: a press while the orb is in it
+// moves the orb to Plan first, so the mic in Research always talks to
+// Research.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Mic, Square } from "lucide-react";
 import {
@@ -42,19 +43,16 @@ const HEARD_LINGER_MS = 6000;
  * spoken just before the button is pressed must still land. */
 const BUS_LINGER_MS = 10000;
 
-const MODES: AlmaVoiceMode[] = ["plan", "assistant", "build", "transcribe"];
+const MODES: AlmaVoiceMode[] = ["plan", "transcribe"];
 
-/** What pressing the mic does in this mode. */
+/** What pressing the mic does in this mode. Any mode this composer does not
+ * offer becomes Plan on the press, so its title is Plan's. */
 function talkTitle(mode: AlmaVoiceMode): string {
   switch (mode) {
     case "transcribe":
       return m.alma_voice_talk_transcribe();
-    case "plan":
+    default:
       return m.alma_voice_talk_plan();
-    case "assistant":
-      return m.alma_voice_talk_assistant();
-    case "build":
-      return m.alma_voice_talk_build();
   }
 }
 
@@ -64,8 +62,6 @@ function modeLabel(mode: AlmaVoiceMode): string {
       return m.alma_voice_mode_plan();
     case "assistant":
       return m.alma_voice_mode_assistant();
-    case "build":
-      return m.alma_voice_mode_build();
     case "transcribe":
       return m.alma_voice_mode_transcribe();
   }
@@ -164,13 +160,23 @@ export function AlmaVoiceControls({ onDictation }: Props) {
     if (busy) return;
     setBusy(true);
     try {
-      setState(await almaVoiceTalk(listening || state?.speaking ? "stop" : "start"));
+      const stop = listening || state?.speaking;
+      // The orb may be in Assistant from the dock; a press here is for the
+      // session on screen, so the mode is moved to Plan before the mic opens.
+      if (!stop && state && !MODES.includes(state.mode)) {
+        const switched = await setAlmaVoiceMode("plan");
+        if (!switched.ok) {
+          setState(switched);
+          return;
+        }
+      }
+      setState(await almaVoiceTalk(stop ? "stop" : "start"));
     } catch {
       await refresh();
     } finally {
       setBusy(false);
     }
-  }, [busy, listening, refresh, state?.speaking]);
+  }, [busy, listening, refresh, state]);
 
   const chooseMode = useCallback(
     async (mode: AlmaVoiceMode) => {

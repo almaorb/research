@@ -1017,7 +1017,7 @@ export const getRuntime = (signal?: AbortSignal) => get<RuntimeInfo>("/_orx/runt
 // Relayed by this orx to the editor's control API (`/api/alma/<route>` →
 // `/<route>`); every reply is the editor's own `{ok, ...}` or `{ok:false, error}`.
 
-export type AlmaVoiceMode = "transcribe" | "assistant" | "plan" | "build";
+export type AlmaVoiceMode = "transcribe" | "assistant" | "plan";
 
 export interface AlmaVoiceState {
   ok: boolean;
