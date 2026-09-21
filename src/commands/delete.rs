@@ -75,7 +75,7 @@ fn agent_session_present() -> bool {
 fn require_direct_human_session(terminal: bool, agent_session: bool) -> Result<()> {
     if agent_session {
         return Err(anyhow!(
-            "`orx delete` cannot run from an OpenResearch agent session. Run it directly in your terminal."
+            "`orx delete` cannot run from an Research agent session. Run it directly in your terminal."
         ));
     }
     if !terminal {

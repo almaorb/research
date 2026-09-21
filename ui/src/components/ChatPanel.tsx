@@ -5880,7 +5880,7 @@ export function ChatPanel({
             </IconButton>
             <span className="flex min-w-0 flex-col gap-1 text-start text-text">
               <span className="truncate text-sm leading-tight">{m.projects_local()}</span>
-              <span className="truncate text-xs leading-tight text-subtext">OpenResearch {ltr(runtime.version)}</span>
+              <span className="truncate text-xs leading-tight text-subtext">Research {ltr(runtime.version)}</span>
             </span>
           </div>
         </div>
