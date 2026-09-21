@@ -6009,7 +6009,14 @@ async fn disconnect_remote_session(
 /// orb's state, mic and mode, a sentence for it to say, the transcript bus
 /// and the editor's theme. Nothing else — the browser and terminal routes
 /// stay the agents'.
-const ALMA_VOICE_ROUTES: [&str; 6] = ["voice/state", "voice/talk", "voice/mode", "say", "bus", "theme"];
+const ALMA_VOICE_ROUTES: [&str; 6] = [
+    "voice/state",
+    "voice/talk",
+    "voice/mode",
+    "say",
+    "bus",
+    "theme",
+];
 
 async fn alma_voice(
     State(state): State<AppState>,
