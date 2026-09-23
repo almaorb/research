@@ -1,6 +1,6 @@
 ---
 name: alma-research
-description: "Research an engineering goal inside the Alma IDE before planning it: what the company already knows (memory), what the codebase already does (semantic index), what exists on GitHub and the web, and which approach holds up. Use whenever a task starts with a goal rather than a diff — a feature, an integration, a rewrite, 'should we build it this way or that way' — and before proposing a plan."
+description: "Research an engineering goal inside the Alma IDE before planning it: what the company already knows (memory), what the codebase already does (read directly), what exists on GitHub and the web, and which approach holds up. Use whenever a task starts with a goal rather than a diff — a feature, an integration, a rewrite, 'should we build it this way or that way' — and before proposing a plan."
 ---
 
 # Research before you plan
@@ -17,11 +17,12 @@ company's memory, THIS project's code, and the browser the human is watching.
    implies. Past conversations, decisions and research notes come back with
    where they came from. A plan that repeats last month's research is wasted;
    a decision that was already made is not yours to reopen without saying so.
-2. **What does the code already do?** `rag_search` the open project with the
-   question a newcomer would ask ("where do we decide whether a phase
-   passed?"), not a grep string. If it answers `indexed: false`, call
-   `rag_index` once and search again. Then read the files it names. Never
-   claim the code does or does not do something you have not read.
+2. **What does the code already do?** Read it: `grep` / Glob for the
+   names the goal implies, then Read the files — the open project's, and any
+   project under `~/code` the catalog names. That is exact and current; a
+   semantic index of code is a chunked copy that is stale by the next commit,
+   so do not use `rag_search` or `rag_index` for code. Never claim the code
+   does or does not do something you have not read.
 3. **What have we already built?** Every product here is assembled from
    the company's own parts, never from scratch; find them before looking
    anywhere else. See "What already exists" below for where the inventory
@@ -52,7 +53,9 @@ inventory these sends the plan off to rebuild one of them. So, before the
 options section, the report carries an inventory drawn from these three
 places, each entry with its repository, path and what it provides:
 
-- **The catalog, first.** `~/code/examples/CATALOG.md` lists every
+- **The catalog, first.** `catalog_match` with the goal returns the
+  company's projects nearest to it, each with its path on this machine; the
+  rendered `~/code/examples/CATALOG.md`, when that checkout is here, lists every
   repository by tier — **production** (serves a client), **scaffold** (empty
   structure), **example** (a worked example in the corpus), **tooling** —
   with lineage, vertical, stack, features and what each is good for, rendered
@@ -158,7 +161,7 @@ which one and where it came from.
 - Every claim carries a link or a file path. A finding without one is an
   opinion.
 - A tool that fails is a finding, not a footnote. If `memory_recall` or
-  `rag_search` errors, stop and say so in one line before anything else —
+  `catalog_match` errors, stop and say so in one line before anything else —
   the human can fix the editor in a minute, and research done blind to the
   company's memory picks the wrong defaults (a session once recommended
   Vercel and Supabase that way). Do not carry on with "the memory server

@@ -1853,7 +1853,9 @@ fn alma_tool_is_research(tool_name: &str) -> bool {
     matches!(
         tool_name.trim_start_matches("mcp__alma__"),
         "rag_search"
-            | "rag_index"
+            | "catalog_match"
+            | "vault_search"
+            | "vault_list"
             | "memory_recall"
             | "memory_remember"
             | "browser_read"

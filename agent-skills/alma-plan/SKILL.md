@@ -79,8 +79,9 @@ fenced `json` block in this shape:
   `"executor": {"ssh": {"host": ..., "directory": ...}}` to build on a
   remote host over ssh and tmux, `"references"` (a list of absolute paths
   or clone URLs of the projects the plan builds on — what `catalog_match`
-  found — which the supervisor indexes before the first phase, so every
-  builder can `rag_search` them), and per phase `"id"` and `"depends_on"`.
+  found — which the supervisor fetches before the first phase and names in
+  every brief, so each builder reads them directly by path; nothing is
+  indexed), and per phase `"id"` and `"depends_on"`.
 - Before `ExitPlanMode`, write the design down as files in the worktree so
   the supervisor and every phase can read them: `docs/inventory.md` (what
   already exists and where — the capability map from the research),
