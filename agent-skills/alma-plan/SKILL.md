@@ -6,10 +6,14 @@ description: "Write an engineering plan the Alma IDE's supervisor can run unatte
 # A plan the supervisor can run
 
 When the human approves your plan with **Approve and build**, the Alma IDE's
-supervisor takes over: it hands you one phase at a time in this same session,
-runs that phase's checks when you stop, and only then hands you the next —
-or hands the same one back with the failing output. Nobody is watching in
-between. So the plan you present must be one a machine can drive.
+supervisor takes over and you are done. It hands each phase, as a brief, to a
+builder: Claude Code in one of the editor's terminals, in a worktree of the
+phase's own, starting cold with only the brief, the design records and the
+run branch to go on. When the builder stops, the supervisor runs that phase's
+checks; the checks alone decide whether the phase passed, and a failure goes
+back to the builder with its output. Nobody is watching in between. So the
+plan you present must be one a machine can drive, and every brief must stand
+on its own.
 
 ## The contract
 
@@ -23,9 +27,10 @@ fenced `json` block in this shape:
   "phases": [
     {
       "title": "what this phase delivers",
-      "intent": "the brief you will be handed: what to do, and what done looks like",
+      "intent": "the brief the builder is handed: what to do, and what done looks like",
       "checks": [
-        {"description": "what this establishes", "command": "a shell command", "expect": "success"}
+        {"description": "VERIFY (passes today): the workspace builds", "command": "cargo build -p app", "expect": "success"},
+        {"description": "BUILD: /api/invoices answers with the new list", "command": "cargo test -p app invoices_list", "expect": "success"}
       ]
     }
   ]
@@ -38,10 +43,21 @@ fenced `json` block in this shape:
   checked that way, split it or rewrite it until it can.
 - `expect` is one of `"success"` (exits zero, the default), `"exit:N"`,
   `"contains:TEXT"`, `"excludes:TEXT"`.
-- Prefer checks that already exist: the project's tests, its build, its
-  linter. A check that already passes on the untouched tree proves nothing
-  on its own — pair it with one that only goes green once the phase's work
-  exists (`test -s NEW_FILE`, `cargo test new_test_name`, `grep -q`).
+- **Every check is VERIFY or BUILD, and the editor tries them all before it
+  accepts the plan**, on this worktree as it stands:
+  - A check whose description starts with `VERIFY` pins something that is
+    true today and must stay true: the build, the existing tests, a route
+    that already answers. It must **pass** today, or the plan comes back.
+  - Every other check is a BUILD check: the gate the phase's work is aimed
+    at. Start its description with `BUILD:`. It must **fail** today, or the
+    plan comes back — a gate that is already open cannot tell the work from
+    its absence, and the phase would pass with nothing done. Point it at
+    what the work creates: `cargo test new_test_name`, `test -s NEW_FILE`,
+    `grep -q 'fn new_route' src/routes.rs`, a URL that 404s today.
+  - Every phase needs at least one BUILD check. Prefer checks that already
+    exist for VERIFY (the project's tests, its build, its linter).
+  - `$ALMA_PORT` is the run's own port, set in every check and in the
+    builder's shell; a service the plan starts listens there.
 - Order the phases so each one leaves the tree working. Do not number them;
   order is position in the list. Four to eight phases is usually right; a
   phase is an hour or two of work.
@@ -61,7 +77,10 @@ fenced `json` block in this shape:
   quoted into every brief; without it the default says everything is
   preinstalled and nothing may be installed, containerised or scaffolded),
   `"executor": {"ssh": {"host": ..., "directory": ...}}` to build on a
-  remote host over ssh and tmux, and per phase `"id"` and `"depends_on"`.
+  remote host over ssh and tmux, `"references"` (a list of absolute paths
+  or clone URLs of the projects the plan builds on — what `catalog_match`
+  found — which the supervisor indexes before the first phase, so every
+  builder can `rag_search` them), and per phase `"id"` and `"depends_on"`.
 - Before `ExitPlanMode`, write the design down as files in the worktree so
   the supervisor and every phase can read them: `docs/inventory.md` (what
   already exists and where — the capability map from the research),
@@ -71,5 +90,7 @@ fenced `json` block in this shape:
 - The prose above the block and the block must agree. The block is what
   runs.
 
-If the plan comes back with "That plan cannot be supervised: …", fix exactly
-what it names and present the plan again.
+If the plan comes back with "That plan cannot be run by the Alma supervisor:
+…", fix exactly what it names and present the plan again. A BUILD check that
+"would pass before its work exists" needs a sharper target, not a VERIFY
+label: relabel it only if it really is meant to hold before the work.

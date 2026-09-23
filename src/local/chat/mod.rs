@@ -5737,8 +5737,13 @@ impl ChatHost {
     /// has already been delivered, so a (store-only) failure is logged rather
     /// than surfaced — an Err from `respond` would make the UI's catch clear
     /// `busy` on a turn that is actually still streaming.
-    /// Hands an approved plan to the Alma IDE's supervisor, which runs it
-    /// through this session one phase at a time.
+    /// Hands an approved plan to the Alma IDE's supervisor, which builds it
+    /// phase by phase with Claude Code in one of the editor's terminals.
+    ///
+    /// The editor runs every check of the plan on the untouched worktree
+    /// before it answers — a check the plan says passes today must, and
+    /// every other one must not yet — so the wait is as long as those
+    /// checks take, not the moment a store takes.
     ///
     /// `Ok(Ok(()))` — the editor took the plan; `Ok(Err(reasons))` — the
     /// editor refused it because a phase cannot be checked by a machine,
@@ -5773,9 +5778,9 @@ impl ChatHost {
                 "worktree": worktree,
                 "title": session.title,
                 "planMarkdown": plan_markdown,
-                "secs": 60,
+                "secs": 1800,
             }))
-            .timeout(std::time::Duration::from_secs(70))
+            .timeout(std::time::Duration::from_secs(1860))
             .send()
             .await
             .map_err(|error| anyhow!("the Alma IDE did not answer: {error}"))?

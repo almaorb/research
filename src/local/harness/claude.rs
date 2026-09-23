@@ -682,9 +682,10 @@ impl Harness for ClaudeCode {
                             ctx.host.settle_permission(
                                 native_id,
                                 crate::local::chat::PermissionDecision::deny(
-                                    "The user approved the plan. The Alma supervisor will hand \
-                                     you its phases one at a time in this session, each as a new \
-                                     message. Stop now and wait for the first one; do not start \
+                                    "The user approved the plan and the Alma supervisor has \
+                                     taken it: each phase is built by Claude Code in a terminal \
+                                     of the editor, in a worktree of its own, and judged by the \
+                                     plan's checks. Your part is done. Stop now; do not start \
                                      implementing.",
                                 ),
                             )?;
