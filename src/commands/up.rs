@@ -5759,17 +5759,96 @@ async fn openresearch_terminal(
 
 /// Concrete Host entries from `~/.ssh/config` (wildcard patterns skipped) —
 /// read-only groundwork for an SSH compute backend. No keys are read.
+/// The lines of an ssh config with every `Include` expanded in place, as ssh
+/// reads it. A relative path is under `~/.ssh`, `~` is the home directory, and
+/// a `*` or `?` in the file name matches like a shell glob (sorted, as ssh
+/// does). A config that names only shared files (`Include ~/.ssh/fleet.conf`)
+/// would otherwise list none of its hosts.
+fn read_ssh_config_lines(path: &std::path::Path, depth: usize, out: &mut Vec<String>) {
+    // ssh itself stops at 16 levels; a loop of includes must not hang us.
+    if depth > 16 {
+        return;
+    }
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return;
+    };
+    for line in raw.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        let Some((key, rest)) = trimmed.split_once([' ', '\t', '=']) else {
+            out.push(line.to_string());
+            continue;
+        };
+        if !key.eq_ignore_ascii_case("include") {
+            out.push(line.to_string());
+            continue;
+        }
+        for pattern in rest.split_whitespace() {
+            for file in ssh_include_files(pattern.trim_matches('"')) {
+                read_ssh_config_lines(&file, depth + 1, out);
+            }
+        }
+    }
+}
+
+fn ssh_include_files(pattern: &str) -> Vec<std::path::PathBuf> {
+    let Some(home) = dirs::home_dir() else {
+        return Vec::new();
+    };
+    let path = if let Some(rest) = pattern.strip_prefix("~/") {
+        home.join(rest)
+    } else if std::path::Path::new(pattern).is_absolute() {
+        std::path::PathBuf::from(pattern)
+    } else {
+        home.join(".ssh").join(pattern)
+    };
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if !name.contains(['*', '?']) {
+        return vec![path];
+    }
+    let Some(dir) = path.parent() else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<_> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_file()
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| glob_matches(name.as_bytes(), n.as_bytes()))
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+/// `*` and `?` over one file name, the only wildcards ssh's Include takes.
+fn glob_matches(pattern: &[u8], name: &[u8]) -> bool {
+    match (pattern.first(), name.first()) {
+        (None, None) => true,
+        (Some(b'*'), _) => {
+            glob_matches(&pattern[1..], name)
+                || (!name.is_empty() && glob_matches(pattern, &name[1..]))
+        }
+        (Some(b'?'), Some(_)) => glob_matches(&pattern[1..], &name[1..]),
+        (Some(p), Some(n)) if p == n => glob_matches(&pattern[1..], &name[1..]),
+        _ => false,
+    }
+}
+
 fn list_ssh_hosts() -> Vec<Value> {
     let Some(path) = dirs::home_dir().map(|h| h.join(".ssh").join("config")) else {
         return Vec::new();
     };
-    let Ok(raw) = std::fs::read_to_string(path) else {
-        return Vec::new();
-    };
+    let mut lines = Vec::new();
+    read_ssh_config_lines(&path, 0, &mut lines);
     let mut hosts: Vec<Value> = Vec::new();
     // Indices into `hosts` for the Host block currently being filled.
     let mut current: Vec<usize> = Vec::new();
-    for line in raw.lines() {
+    for line in &lines {
         let line = line.split('#').next().unwrap_or("").trim();
         if line.is_empty() {
             continue;
@@ -7762,6 +7841,15 @@ pub(crate) async fn spa(uri: Uri) -> Response {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ssh_include_globs_match_like_ssh() {
+        assert!(super::glob_matches(b"*.conf", b"fleet.conf"));
+        assert!(super::glob_matches(b"fleet.conf", b"fleet.conf"));
+        assert!(super::glob_matches(b"host?", b"host1"));
+        assert!(!super::glob_matches(b"*.conf", b"config"));
+        assert!(!super::glob_matches(b"host?", b"host"));
+    }
+
     use super::*;
 
     #[tokio::test]
