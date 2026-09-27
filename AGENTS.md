@@ -8,6 +8,10 @@
 
 When changing authentication, organization, sandbox, or managed-compute APIs, inspect the corresponding `openresearch.sh` implementation and keep both sides compatible. Do not edit the companion repository unless it is explicitly in scope.
 
+## Project memory
+
+**`memory/`** holds what the project has learned — decisions, preferences and corrections — as committed Markdown, never in dot-folders like `.claude/`. Read `memory/README.md` first; when you learn something durable, add or edit a file there in the same commit as the change.
+
 ## Development guidelines
 
 - Rust code lives in `src/`; the dashboard lives in `ui/src/`. Keep local-only behavior local and use the production API client only for capabilities owned by `openresearch.sh`.

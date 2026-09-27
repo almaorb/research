@@ -1364,9 +1364,7 @@ async fn create_project(
         ),
         _ => None,
     };
-    let github_sync_enabled = req
-        .github_sync_enabled
-        .unwrap_or_else(crate::config::github_for_new_projects);
+    let requested_github_sync = req.github_sync_enabled;
     let repo_size_kb = match clone_url.as_deref() {
         Some(url) => local::github::public_repo_size_kb(url).await,
         None => None,
@@ -1405,6 +1403,13 @@ async fn create_project(
         .admit(&project.id)
         .ok_or_else(|| bad_request("project deletion is in progress"))?;
     drop(create_admission);
+    let github_sync_enabled = match requested_github_sync {
+        Some(enabled) => enabled,
+        None => {
+            crate::config::github_for_new_projects()
+                || existing_repository_is_writable(&project).await
+        }
+    };
     let (project, github_publication_error) = if github_sync_enabled {
         match push_project_for_sync(project.clone()).await {
             Ok((project, _)) => (project, None),
@@ -1423,6 +1428,18 @@ async fn create_project(
         "project": project_json(&project),
         "githubPublicationError": github_publication_error,
     })))
+}
+
+/// A folder added with its GitHub remote already in place syncs there unless
+/// asked otherwise — but only when the push would land in that repository,
+/// never in a new one made on the caller's behalf.
+async fn existing_repository_is_writable(project: &local::model::LocalProject) -> bool {
+    project.has_github_repository()
+        && local::github::repo_meta(&project.github_owner, &project.github_repo)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|meta| meta.can_push && !meta.archived)
 }
 
 async fn get_project(Path(id): Path<String>) -> ApiResult {

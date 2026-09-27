@@ -90,6 +90,7 @@ export function NewProjectForm({
   const [error, setError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [githubSyncEnabled, setGithubSyncEnabled] = useState(false);
+  const [githubSyncTouched, setGithubSyncTouched] = useState(false);
   const [paperQuery, setPaperQuery] = useState("");
   const [paper, setPaper] = useState<ResolvedPaper | null>(null);
   const [choosingPaper, setChoosingPaper] = useState(false);
@@ -122,12 +123,6 @@ export function NewProjectForm({
   const accountQuery = useQuery(githubAccountQuery());
   const githubLogin = accountQuery.data?.login ?? (accountQuery.isPending ? undefined : null);
   const defaultsQuery = useQuery(getProjectDefaultsQuery());
-  const appliedDefaults = useRef(false);
-  useEffect(() => {
-    if (appliedDefaults.current || !defaultsQuery.data) return;
-    appliedDefaults.current = true;
-    setGithubSyncEnabled(defaultsQuery.data.githubForNewProjects);
-  }, [defaultsQuery.data]);
   const previewName = useDebouncedValue(name.trim(), 150);
   const previewQuery = useQuery({ ...githubProjectRepoPreviewQuery(previewName), enabled: previewName === name.trim() });
   const githubRepoName = previewName === name.trim() ? previewQuery.data?.repo ?? slugify(name, 48) : slugify(name, 48);
@@ -135,6 +130,12 @@ export function NewProjectForm({
   const accessQuery = useQuery({ ...repoAccessQuery(existingGithubRepo?.owner ?? "", existingGithubRepo?.repo ?? ""), enabled: Boolean(existingGithubRepo), subscribed: Boolean(existingGithubRepo) });
   const githubAccessPending = Boolean(existingGithubRepo) && accessQuery.isFetching;
   const writableGithubRepo = existingGithubRepo && accessQuery.data?.canPush ? `github.com/${existingGithubRepo.owner}/${existingGithubRepo.repo}` : null;
+  // A folder already on GitHub that the user can push to syncs there by default;
+  // otherwise the Settings default applies. A choice made in the form sticks.
+  useEffect(() => {
+    if (githubSyncTouched) return;
+    setGithubSyncEnabled(Boolean(writableGithubRepo) || (defaultsQuery.data?.githubForNewProjects ?? false));
+  }, [githubSyncTouched, writableGithubRepo, defaultsQuery.data]);
   const searchInput = useDebouncedValue(paperQuery.trim(), 350);
   const paperId = parsePaperId(searchInput);
   const canSearch = mode === "paper" && !paper && searchInput === paperQuery.trim();
@@ -598,7 +599,10 @@ export function NewProjectForm({
                   className="m-0"
                   type="checkbox"
                   checked={githubSyncEnabled}
-                  onChange={(event) => setGithubSyncEnabled(event.target.checked)}
+                  onChange={(event) => {
+                    setGithubSyncTouched(true);
+                    setGithubSyncEnabled(event.target.checked);
+                  }}
                   disabled={pending}
                 />
                 <strong className="text-base font-medium leading-[1.3] text-text">
