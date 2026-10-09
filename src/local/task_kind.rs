@@ -3,12 +3,11 @@
 //! - **Research**: answer a question with a sourced report. It runs straight
 //!   through in auto mode: no plan to approve, no build supervisor. It writes its
 //!   deliverables into the project's artifacts folder (passed to the agent as a
-//!   writable directory). It loads the `alma-report` skill and follows the
+//!   writable directory). It loads the `research-report` skill and follows the
 //!   playbook's research contract: sources with publisher and dates, a sources
 //!   list, a check of its own claims.
-//! - **Plan**: research an engineering goal and end in a plan the Alma IDE's
-//!   supervisor builds (`alma-research` + `alma-plan`, plan mode, Approve and
-//!   build).
+//! - **Plan**: research an engineering goal and end in the `PLAN.md`
+//!   checklist the Alma factory runs (`alma-research` + `alma-plan`).
 //! - No kind (older sessions, and the dashboard's plain composer): everything
 //!   as before.
 //!
@@ -113,7 +112,7 @@ pub fn playbook_section(
              This session is a **research task**, not an engineering build. Answer the \
              question with evidence and write the deliverables; there is no plan to \
              present and nothing to approve. Do not call ExitPlanMode and do not use the \
-             `alma-plan` skill. Load **`alma-report`** before you start: it is the method \
+             `alma-plan` skill. Load **`research-report`** before you start: it is the method \
              (questions, search rounds, source rules, verification) and the deliverable \
              layout.\n\n\
              - Write every deliverable under `{artifacts}` (a folder per report), never \
@@ -125,9 +124,10 @@ pub fn playbook_section(
         )),
         Some(TaskKind::Plan) => out.push_str(
             "## This task: an engineering plan\n\n\
-             This session researches an engineering goal and ends in a plan the Alma \
-             IDE's supervisor builds. Load **`alma-research`**, then **`alma-plan`**, and \
-             present the plan with ExitPlanMode for the user to approve.\n\n",
+             This session researches an engineering goal and ends in the `PLAN.md` \
+             checklist the Alma factory runs: 5 to 10 broad phases, each with `check:` \
+             lines. Load **`alma-research`**, then **`alma-plan`**, and present the \
+             checklist whole for the user to run.\n\n",
         ),
         None => {}
     }
@@ -215,12 +215,13 @@ mod tests {
         let research =
             playbook_section(Some(TaskKind::Research), &["/r/dishorb".into()], "/files/p");
         assert!(research.contains("research task"));
-        assert!(research.contains("alma-report"));
+        assert!(research.contains("research-report"));
         assert!(research.contains("Do not call ExitPlanMode"));
         assert!(research.contains("/files/p"));
         assert!(research.contains("- `/r/dishorb`"));
         let plan = playbook_section(Some(TaskKind::Plan), &[], "/files/p");
-        assert!(plan.contains("alma-plan") && !plan.contains("Reference folders"));
+        assert!(plan.contains("alma-plan") && plan.contains("PLAN.md"));
+        assert!(!plan.contains("Reference folders"));
         assert!(playbook_section(None, &[], "/files/p").is_empty());
     }
 }
