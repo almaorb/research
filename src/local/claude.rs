@@ -549,9 +549,9 @@ async fn spawn_client(spec: &SpawnSpec, auth_generation: u64) -> Result<Arc<Clau
                 Ok(path) => {
                     cmd.arg("--mcp-config").arg(path);
                     cmd.args(["--permission-prompt-tool", "mcp__orx__approve"]);
-                    // Give a held approval an hour before the CLI abandons the
-                    // tool call; orx denies at 55 min, safely inside it.
-                    cmd.env("MCP_TOOL_TIMEOUT", "3600000");
+                    // Give a held approval twelve hours before the CLI abandons
+                    // the tool call; orx denies five minutes before that.
+                    cmd.env("MCP_TOOL_TIMEOUT", "43200000");
                     config.bridge_active = true;
                 }
                 Err(e) => {

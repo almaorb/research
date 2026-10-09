@@ -720,10 +720,11 @@ fn tool_state_signature(parts: &[WirePart]) -> Vec<(String, String)> {
 }
 
 /// How long a bridge approval card may sit unanswered before it's denied and
-/// the turn continues. Kept under the `MCP_TOOL_TIMEOUT` the claude child runs
-/// with (60 min — see `harness::claude`), so orx answers before the CLI gives
-/// up on the tool call.
-const BRIDGE_ANSWER_TIMEOUT: Duration = Duration::from_secs(55 * 60);
+/// the turn continues. A plan waits for a person, who may be away for the
+/// afternoon: at 55 minutes every card of a long session expired unanswered.
+/// Kept under the `MCP_TOOL_TIMEOUT` the claude child runs with (12 hours —
+/// see `claude.rs`), so orx answers before the CLI gives up on the tool call.
+const BRIDGE_ANSWER_TIMEOUT: Duration = Duration::from_secs(12 * 60 * 60 - 5 * 60);
 
 // --- wire types (what the UI renders) ---------------------------------------
 
@@ -3061,7 +3062,7 @@ impl ChatHost {
         let decision = tokio::select! {
             d = rx => d.unwrap_or_else(|_| PermissionDecision::deny("the approval was cancelled")),
             _ = tokio::time::sleep(BRIDGE_ANSWER_TIMEOUT) => PermissionDecision::deny(
-                "No one answered this approval within 55 minutes; treat it as denied \
+                "No one answered this approval within 12 hours; treat it as denied \
                  and wrap up the turn cleanly.",
             ),
         };

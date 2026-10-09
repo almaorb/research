@@ -22,10 +22,10 @@ const PROMPT_ACTIONS_CLASS_NAME = "prompt-actions plan-strip-actions flex flex-w
  *    (skip every gate, not just Auto's). No plain Accept edits tier here —
  *    the app has no story for partial (edits-only) approval.
  *  - Open plan: link in the title row → the end-pane plan tab.
- *  - Approve and build (primary when `supervised`): inside the Alma IDE the
- *    plan goes to its supervisor, which runs the phases through this session
- *    one at a time with checks in between; the auto/bypass accepts move to
- *    the caret menu. */
+ *  - Approve and build (the only action when `supervised`): inside the Alma
+ *    IDE the plan, a PLAN.md checklist, goes to its factory, which builds it
+ *    in one Claude Code session of its own with checks between phases. The
+ *    research session never builds, so it offers no auto or bypass accept. */
 export function PlanStrip({
   synthesized,
   agentLabel,
@@ -147,7 +147,13 @@ export function PlanStrip({
             {m.plan_strip_revise_05bacc9()}
           </Button>
           <span className="plan-strip-spacer flex-1" />
-          {showResumeModes ? (
+          {supervised ? (
+            // Inside Alma, Research never builds: the plan's one way forward
+            // is the factory, which runs it in a terminal of its own.
+            <Button size="small" variant="primary" onClick={() => onApprove("supervised")}>
+              {m.plan_strip_approve_and_build()}
+            </Button>
+          ) : showResumeModes ? (
             <div className="plan-strip-approve relative flex" ref={menuRef}>
               <Button
                 size="small"
