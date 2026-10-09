@@ -4338,6 +4338,10 @@ export function ChatPanel({
   const settingsMutationSeq = useRef(0);
   const planMutationSeq = useRef(0);
   const [planModeOverride, setPlanModeOverride] = useState<boolean | null>(null);
+  /** What the next new session is for; empty is a plain chat. Chosen before
+   * the first message, it decides how the session runs (a research report
+   * runs straight through; an engineering plan waits for approval). */
+  const [newTaskKind, setNewTaskKind] = useState<"" | "research" | "plan">("");
   const planModeOverrideRef = useRef<boolean | null>(null);
   const queuedPlanOverrideSeen = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -5446,12 +5450,16 @@ export function ChatPanel({
   async function openNewSession(selection: ModelSelection, planMode: boolean | undefined) {
     const scope = composerScopeRef.current;
     const visit = projectVisitRef.current;
+    // A task kind decides the mode itself: the composer's permission and Plan
+    // choices only apply to a plain chat.
+    const kind = newTaskKind || undefined;
     const session = await createChatSessionMutation.mutateAsync([projectId, selection.harness, {
       model: selection.model,
       serviceTier: selection.serviceTier,
-      permissionMode: selection.permissionMode,
-      planMode,
+      permissionMode: kind ? undefined : selection.permissionMode,
+      planMode: kind ? undefined : planMode,
       reasoningLevel: selection.reasoningLevel,
+      kind,
     }]);
     if (projectVisitRef.current === visit) {
       setSessions((cur) => [session, ...cur.filter((row) => row.id !== session.id)]);
@@ -6475,6 +6483,19 @@ export function ChatPanel({
               {/* The model picker reflects the open session (harness locked once it
                 exists); the global default only applies before the first
                 message. */}
+              {!openSession && (
+                <select
+                  className="mr-1 h-7 rounded-md border border-border bg-background px-2 text-xs text-subtext"
+                  aria-label={m.chat_task_kind_label()}
+                  title={m.chat_task_kind_label()}
+                  value={newTaskKind}
+                  onChange={(e) => setNewTaskKind(e.target.value as "" | "research" | "plan")}
+                >
+                  <option value="">{m.chat_task_kind_chat()}</option>
+                  <option value="research">{m.chat_task_kind_research()}</option>
+                  <option value="plan">{m.chat_task_kind_plan()}</option>
+                </select>
+              )}
               <div className="flex min-w-0 items-center">
                 <ModelPicker
                   value={composerSelection}

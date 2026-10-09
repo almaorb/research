@@ -1,6 +1,6 @@
 ---
 name: alma-plan
-description: "Write an engineering plan the Alma IDE's supervisor can run unattended: ordered phases, each with a brief and at least one shell check that decides on its own whether the phase worked. Use in plan mode, once the research is done and the human has heard the shape, before calling ExitPlanMode."
+description: "Write an engineering plan the Alma IDE's supervisor can run unattended: ordered phases, each with a brief and at least one shell check that decides on its own whether the phase worked. Use in plan mode, once the research is done and the human has heard the shape, before calling ExitPlanMode. Never for a research report (that is research-report)."
 ---
 
 # A plan the supervisor can run

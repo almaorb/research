@@ -14,3 +14,4 @@ here (or edit the one it belongs to) in the same commit as the change.
 | File | Lesson |
 |---|---|
 | [existing-github-folder-syncs-automatically.md](existing-github-folder-syncs-automatically.md) | A folder added with a writable GitHub remote gets GitHub sync on by default |
+| [research-tasks-have-a-kind.md](research-tasks-have-a-kind.md) | A research task has a kind; a report never goes through a plan |

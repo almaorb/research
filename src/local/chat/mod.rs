@@ -1120,6 +1120,8 @@ pub fn session_json(s: &StoredChatSession, busy: bool) -> Value {
         "contextUsage": context_usage,
         "activeLeafId": s.active_leaf_id,
         "parentSessionId": s.parent_session_id,
+        "kind": crate::local::task_kind::of(s.task_kind.as_deref()).map(|k| k.id()),
+        "referenceDirs": crate::local::task_kind::parse_reference_dirs(s.reference_dirs.as_deref()),
     })
 }
 
@@ -9094,6 +9096,8 @@ mod bridge_tests {
             bootstrap_context: None,
             active_leaf_id: None,
             parent_session_id: None,
+            task_kind: None,
+            reference_dirs: None,
             created_at: 1,
             updated_at: 1,
         }
@@ -9233,6 +9237,8 @@ mod run_wakeup_tests {
                 bootstrap_context: None,
                 active_leaf_id: None,
                 parent_session_id: None,
+                task_kind: None,
+                reference_dirs: None,
                 created_at: 1,
                 updated_at: 1,
             })
@@ -9996,6 +10002,8 @@ mod steering_tests {
                 bootstrap_context: None,
                 active_leaf_id: None,
                 parent_session_id: None,
+                task_kind: None,
+                reference_dirs: None,
                 created_at: 1,
                 updated_at: 1,
             })

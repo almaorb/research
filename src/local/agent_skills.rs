@@ -22,6 +22,7 @@
 //! because a session already has a project; the Full set includes it. The
 //! `orx-` prefix on every dir name makes modules unmistakable in a skill list.
 
+use crate::local::task_kind::TaskKind;
 use std::path::Path;
 
 use crate::error::{anyhow, Result};
@@ -105,6 +106,7 @@ const PAPER: &str = include_str!("../../agent-skills/orx-paper/SKILL.md");
 const INSTANCES: &str = include_str!("../../agent-skills/orx-instances/SKILL.md");
 const ALMA_RESEARCH: &str = include_str!("../../agent-skills/alma-research/SKILL.md");
 const ALMA_PLAN: &str = include_str!("../../agent-skills/alma-plan/SKILL.md");
+const RESEARCH_REPORT: &str = include_str!("../../agent-skills/research-report/SKILL.md");
 const FIGURES: &str = include_str!("../../agent-skills/orx-figures/SKILL.md");
 const FIGURES_RESOURCES: &[AgentSkillResource] = &[
     AgentSkillResource {
@@ -225,16 +227,28 @@ const S_INSTANCES: AgentSkill = AgentSkill {
 
 const S_ALMA_RESEARCH: AgentSkill = AgentSkill {
     name: "alma-research",
-    description: "Research an engineering goal inside the Alma IDE before planning it: what the company already knows (memory), what the codebase already does (semantic index), what exists on GitHub and the web, and which approach holds up. Use whenever a task starts with a goal rather than a diff, and before proposing a plan.",
+    description: "Research an engineering goal inside the Alma IDE before planning it: what the company already knows (memory), what the codebase already does (read directly), what exists on GitHub and the web, and which approach holds up. Use whenever a task starts with a goal rather than a diff — a feature, an integration, a rewrite, 'should we build it this way or that way' — and before proposing a plan.",
     content: ALMA_RESEARCH,
     resources: &[],
 };
 const S_ALMA_PLAN: AgentSkill = AgentSkill {
     name: "alma-plan",
-    description: "Write an engineering plan the Alma IDE's supervisor can run unattended: ordered phases, each with a brief and at least one shell check that decides on its own whether the phase worked. Use in plan mode, once the research is done, before calling ExitPlanMode.",
+    description: "Write an engineering plan the Alma IDE's supervisor can run unattended: ordered phases, each with a brief and at least one shell check that decides on its own whether the phase worked. Use in plan mode, once the research is done and the human has heard the shape, before calling ExitPlanMode. Never for a research report (that is research-report).",
     content: ALMA_PLAN,
     resources: &[],
 };
+
+const S_RESEARCH_REPORT: AgentSkill = AgentSkill {
+    name: "research-report",
+    description: "Answer a business, market, competitor, regulatory or scientific question with a sourced report: outline the questions, search in rounds, grade and date every source, verify the claims, and write the report, a sources list and any tables into the artifacts folder. Use for any research task that ends in a report, not a code change or an engineering plan.",
+    content: RESEARCH_REPORT,
+    resources: &[],
+};
+
+/// The skills that join a session by what it is for, never by default
+/// outside the Alma IDE: written here so a session that changed kind (or an
+/// older worktree) loses the ones it no longer has.
+const OPTIONAL_SKILLS: &[&AgentSkill] = &[&S_ALMA_RESEARCH, &S_ALMA_PLAN, &S_RESEARCH_REPORT];
 
 /// Whether this `orx up` was started by the Alma IDE, whose MCP server the
 /// `alma-*` skills are written for. Outside the editor those tools do not
@@ -247,12 +261,32 @@ fn inside_alma() -> bool {
 /// shared module uses the same canonical `SKILL.md`. The Alma skills join
 /// either set only inside the Alma IDE.
 pub fn skills(set: SkillSet) -> Vec<&'static AgentSkill> {
+    skills_for(set, None)
+}
+
+/// The modules for a session of `kind` (task_kind.rs):
+/// - research: the report method (`research-report`), and no plan skills —
+///   a report has nothing to approve;
+/// - plan: `alma-research` and `alma-plan` (inside the Alma IDE);
+/// - none: as before, plus the report method inside the Alma IDE.
+pub fn skills_for(set: SkillSet, kind: Option<TaskKind>) -> Vec<&'static AgentSkill> {
     let mut modules = base_skills(set);
-    if inside_alma() {
-        modules.push(&S_ALMA_RESEARCH);
-        modules.push(&S_ALMA_PLAN);
-    }
+    modules.extend(optional_for(kind, inside_alma()));
     modules
+}
+
+fn optional_for(kind: Option<TaskKind>, alma: bool) -> Vec<&'static AgentSkill> {
+    match (kind, alma) {
+        (Some(TaskKind::Research), _) => vec![&S_RESEARCH_REPORT],
+        (Some(TaskKind::Plan), true) | (None, true) => {
+            let mut v: Vec<&'static AgentSkill> = vec![&S_ALMA_RESEARCH, &S_ALMA_PLAN];
+            if kind.is_none() {
+                v.push(&S_RESEARCH_REPORT);
+            }
+            v
+        }
+        (_, false) => Vec::new(),
+    }
 }
 
 fn base_skills(set: SkillSet) -> Vec<&'static AgentSkill> {
@@ -318,9 +352,18 @@ pub fn find_resource(
 /// overwriting every file on every call (same freshness semantics as the
 /// playbook — zero drift). Returns `Err` on the first write failure; the caller
 /// treats it like a playbook-write error.
-pub fn ensure_session_skills(worktree: &Path, skills_dir_rel: &str) -> Result<()> {
+pub fn ensure_session_skills(
+    worktree: &Path,
+    skills_dir_rel: &str,
+    kind: Option<TaskKind>,
+) -> Result<()> {
     let base = worktree.join(skills_dir_rel);
-    for name in RETIRED_SKILL_NAMES {
+    let wanted = skills_for(SkillSet::Local, kind);
+    let dropped = OPTIONAL_SKILLS
+        .iter()
+        .filter(|s| !wanted.iter().any(|w| w.name == s.name))
+        .map(|s| s.name);
+    for name in RETIRED_SKILL_NAMES.iter().copied().chain(dropped) {
         let dir = base.join(name);
         match std::fs::remove_dir_all(&dir) {
             Ok(()) => {}
@@ -330,7 +373,7 @@ pub fn ensure_session_skills(worktree: &Path, skills_dir_rel: &str) -> Result<()
             }
         }
     }
-    for skill in skills(SkillSet::Local) {
+    for skill in wanted {
         let dir = base.join(skill.name);
         if dir.exists() {
             std::fs::remove_dir_all(&dir)
@@ -483,6 +526,69 @@ mod tests {
     }
 
     #[test]
+    fn optional_skills_frontmatter_matches_code() {
+        // The Alma and report skills only join inside the editor or by kind, so
+        // the set-wide checks above never see them; check them here.
+        for s in OPTIONAL_SKILLS {
+            let mut lines = s.content.lines();
+            assert_eq!(lines.next(), Some("---"), "{}", s.name);
+            assert_eq!(
+                lines.next().unwrap_or_default(),
+                format!("name: {}", s.name)
+            );
+            let value = lines
+                .next()
+                .unwrap_or_default()
+                .strip_prefix("description: ")
+                .unwrap();
+            let decoded: String = serde_json::from_str(value).unwrap();
+            assert_eq!(
+                decoded, s.description,
+                "{} description drifted from its file",
+                s.name
+            );
+            assert!(
+                (1..=400).contains(&s.description.chars().count()),
+                "{}",
+                s.name
+            );
+        }
+    }
+
+    #[test]
+    fn a_research_task_gets_the_report_method_and_no_plan_skills() {
+        let names = |v: Vec<&AgentSkill>| v.iter().map(|s| s.name).collect::<Vec<_>>();
+        for alma in [true, false] {
+            assert_eq!(
+                names(optional_for(Some(TaskKind::Research), alma)),
+                ["research-report"]
+            );
+        }
+        assert_eq!(
+            names(optional_for(Some(TaskKind::Plan), true)),
+            ["alma-research", "alma-plan"]
+        );
+        assert_eq!(
+            names(optional_for(None, true)),
+            ["alma-research", "alma-plan", "research-report"]
+        );
+        assert!(optional_for(None, false).is_empty());
+        assert!(optional_for(Some(TaskKind::Plan), false).is_empty());
+    }
+
+    #[test]
+    fn a_research_session_loses_the_plan_skills_it_had() {
+        let tmp = std::env::temp_dir().join(format!("orx-skills-kind-{}", uuid::Uuid::new_v4()));
+        let rel = ".claude/skills";
+        std::fs::create_dir_all(tmp.join(rel).join("alma-plan")).unwrap();
+        std::fs::write(tmp.join(rel).join("alma-plan/SKILL.md"), "old").unwrap();
+        ensure_session_skills(&tmp, rel, Some(TaskKind::Research)).unwrap();
+        assert!(!tmp.join(rel).join("alma-plan").exists());
+        assert!(tmp.join(rel).join("research-report/SKILL.md").exists());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
     fn find_resolves_prefixed_and_bare() {
         for set in [SkillSet::Local, SkillSet::Full] {
             assert_eq!(
@@ -582,7 +688,7 @@ mod tests {
             std::fs::create_dir_all(&retired).unwrap();
             std::fs::write(retired.join("SKILL.md"), "stale").unwrap();
         }
-        ensure_session_skills(&tmp, rel).unwrap();
+        ensure_session_skills(&tmp, rel, None).unwrap();
         for name in RETIRED_SKILL_NAMES {
             assert!(
                 !tmp.join(rel).join(name).exists(),
@@ -615,7 +721,7 @@ mod tests {
         }
 
         // Idempotent: a second call overwrites in place and changes nothing.
-        ensure_session_skills(&tmp, rel).unwrap();
+        ensure_session_skills(&tmp, rel, None).unwrap();
         let got2: HashSet<String> = std::fs::read_dir(&base)
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
@@ -630,7 +736,7 @@ mod tests {
         let tmp =
             std::env::temp_dir().join(format!("orx-unified-skills-test-{}", uuid::Uuid::new_v4()));
         let rel = ".agents/skills";
-        ensure_session_skills(&tmp, rel).unwrap();
+        ensure_session_skills(&tmp, rel, None).unwrap();
         let git = std::fs::read_to_string(tmp.join(rel).join("orx-git/SKILL.md")).unwrap();
         assert!(git.contains("never part of compute transport"));
         assert!(git.contains("do not push merely to launch compute"));

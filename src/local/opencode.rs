@@ -164,7 +164,43 @@ fn project_state_md(project: &LocalProject, state: &ProjectState) -> String {
     )
 }
 
+/// What a session is for and which other folders it reads (task_kind.rs),
+/// read from its stored row; an unknown session (tests, a racing delete) is
+/// neither.
+pub fn session_task(session_id: &str) -> (Option<super::task_kind::TaskKind>, Vec<String>) {
+    let Ok(Some(s)) =
+        crate::store::Store::open().and_then(|store| store.get_chat_session(session_id))
+    else {
+        return (None, Vec::new());
+    };
+    (
+        super::task_kind::of(s.task_kind.as_deref()),
+        super::task_kind::parse_reference_dirs(s.reference_dirs.as_deref()),
+    )
+}
+
+/// The folders Claude Code is given beside its worktree: each reference folder,
+/// and for a research task the artifacts folder its report goes into.
+pub fn session_extra_dirs(project: &LocalProject, session_id: &str) -> Vec<PathBuf> {
+    let (kind, refs) = session_task(session_id);
+    let mut dirs: Vec<PathBuf> = refs.into_iter().map(PathBuf::from).collect();
+    if kind == Some(super::task_kind::TaskKind::Research) {
+        let _ = super::files::ensure_dir(project);
+        dirs.push(super::files::files_dir(project));
+    }
+    dirs
+}
+
 fn playbook_md(project: &LocalProject, state: &ProjectState) -> String {
+    playbook_md_for(project, state, None, &[])
+}
+
+fn playbook_md_for(
+    project: &LocalProject,
+    state: &ProjectState,
+    kind: Option<super::task_kind::TaskKind>,
+    reference_dirs: &[String],
+) -> String {
     let id = &project.id;
     let name = &project.name;
     let publication_line = if project.github_enabled() {
@@ -208,7 +244,7 @@ fn playbook_md(project: &LocalProject, state: &ProjectState) -> String {
          {compute_default_source}; load **`orx-compute`** before launching"
     );
     let project_state = project_state_md(project, state);
-    let skill_names = super::agent_skills::skills(super::agent_skills::SkillSet::Local)
+    let skill_names = super::agent_skills::skills_for(super::agent_skills::SkillSet::Local, kind)
         .iter()
         .map(|skill| format!("- `{}`", skill.name))
         .collect::<Vec<_>>()
@@ -217,7 +253,8 @@ fn playbook_md(project: &LocalProject, state: &ProjectState) -> String {
         .split_once("-->\n\n")
         .map(|(_, rest)| rest)
         .unwrap_or(SYSTEM_PROMPT);
-    template
+    let task = super::task_kind::playbook_section(kind, reference_dirs, &artifacts);
+    let body = template
         .replace("{name}", name)
         .replace("{id}", id)
         .replace("{publication_line}", publication_line)
@@ -225,7 +262,16 @@ fn playbook_md(project: &LocalProject, state: &ProjectState) -> String {
         .replace("{compute_bullet}", &compute_bullet)
         .replace("{artifacts}", &artifacts)
         .replace("{project_state}", &project_state)
-        .replace("{skill_names}", &skill_names)
+        .replace("{skill_names}", &skill_names);
+    if task.is_empty() {
+        body
+    } else {
+        // What the task is for goes first: it decides how everything after it is read.
+        match body.split_once("\n## ") {
+            Some((head, rest)) => format!("{head}\n{task}## {rest}"),
+            None => format!("{body}\n\n{task}"),
+        }
+    }
 }
 
 /// Keep the files we drop into the checkout out of `git status` / accidental
@@ -293,12 +339,16 @@ pub fn ensure_playbook(
             .map_err(|e| anyhow!("Could not create {}: {}", parent.display(), e))?;
     }
     let project_state = ProjectState::load(&project.id)?;
-    std::fs::write(&playbook, playbook_md(project, &project_state))
-        .map_err(|e| anyhow!("Could not write {}: {}", playbook.display(), e))?;
+    let (kind, reference_dirs) = session_task(session_id);
+    std::fs::write(
+        &playbook,
+        playbook_md_for(project, &project_state, kind, &reference_dirs),
+    )
+    .map_err(|e| anyhow!("Could not write {}: {}", playbook.display(), e))?;
     // Modular skills, written fresh beside the playbook (same freshness
     // semantics) so this session's agent discovers them natively.
     if let Some(dir) = session_skills_dir {
-        super::agent_skills::ensure_session_skills(&workdir, dir)?;
+        super::agent_skills::ensure_session_skills(&workdir, dir, kind)?;
         // Explicit uploads land beside the built-ins; discovered skills stay native.
         super::user_skills::write_into_session(&workdir, dir)?;
     }

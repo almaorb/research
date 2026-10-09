@@ -1914,7 +1914,7 @@ fn commit_attempt_session(ctx: &mut TurnCtx, state: &TurnState) {
 
 /// The reasoning-level → `--effort` value the spawn config carries. Split out so
 /// the harness and the host agree on exactly what the child was launched with.
-fn spawn_config(ctx: &TurnCtx, native_store: NativeStore) -> SpawnConfig {
+fn spawn_config(ctx: &TurnCtx, native_store: NativeStore, dirs: &SessionDirs) -> SpawnConfig {
     SpawnConfig {
         permission_mode: ctx.permission_mode,
         effort: claude_effort(ctx.reasoning_level.as_deref()).map(str::to_string),
@@ -1926,7 +1926,16 @@ fn spawn_config(ctx: &TurnCtx, native_store: NativeStore) -> SpawnConfig {
         // plan turn respawns). Keeping the wanted value here means a plan turn
         // reconciles against a child that already has the bridge and reuses it.
         bridge_active: uses_permission_bridge(ctx.permission_mode) && ctx.host.up_port().is_some(),
+        extra_dirs: dirs.extra.clone(),
+        read_only_dirs: dirs.read_only.clone(),
     }
+}
+
+/// The folders a session's child gets beside its worktree (task_kind.rs).
+#[derive(Default)]
+struct SessionDirs {
+    extra: Vec<std::path::PathBuf>,
+    read_only: Vec<std::path::PathBuf>,
 }
 
 /// Deadline for a turn's first sign of life — any stdout line at all, echo or
@@ -2149,10 +2158,15 @@ async fn run_turn(ctx: &mut TurnCtx) -> Result<()> {
     // playbook only on respawn, same tradeoff as codex (see opencode.rs's
     // playbook-freshness comment).
     let skills_dir = ClaudeCode.session_skills_dir();
-    let (repo, playbook) =
-        tokio::task::spawn_blocking(move || ensure_playbook(&project, &session_id, skills_dir))
-            .await
-            .map_err(|e| anyhow!("playbook task failed: {e}"))??;
+    let (repo, playbook, dirs) = tokio::task::spawn_blocking(move || {
+        let (repo, playbook) = ensure_playbook(&project, &session_id, skills_dir)?;
+        let extra = crate::local::opencode::session_extra_dirs(&project, &session_id);
+        let (_, refs) = crate::local::opencode::session_task(&session_id);
+        let read_only = refs.into_iter().map(std::path::PathBuf::from).collect();
+        anyhow::Ok((repo, playbook, SessionDirs { extra, read_only }))
+    })
+    .await
+    .map_err(|e| anyhow!("playbook task failed: {e}"))??;
 
     let plan_mode = ctx.permission_mode == Some(PermissionMode::Plan);
     // Clear any bridge-card flag a previous aborted turn left behind so it can't
@@ -2189,7 +2203,7 @@ async fn run_turn(ctx: &mut TurnCtx) -> Result<()> {
         repo,
         playbook,
         resume: resume.clone(),
-        config: spawn_config(ctx, native_store),
+        config: spawn_config(ctx, native_store, &dirs),
     };
     let mut retry_count = 0;
     let mut state;

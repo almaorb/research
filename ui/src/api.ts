@@ -1882,6 +1882,11 @@ export interface ChatSession {
   /** Session whose agent spawned this one with `orx agent spawn`; null for
    * sessions the user started themselves. */
   parentSessionId?: string | null;
+  /** What the session is for: `"research"` (a sourced report, no plan to
+   * approve) or `"plan"` (an engineering plan); null for a plain chat. */
+  kind?: TaskKind | null;
+  /** Other folders the session reads beside its worktree. */
+  referenceDirs?: string[];
   createdAt: number;
   updatedAt: number;
   busy: boolean;
@@ -1893,6 +1898,9 @@ export const listChatSessions = (projectId: string, signal?: AbortSignal) =>
     `/api/chat/sessions?projectId=${encodeURIComponent(projectId)}`,
     signal,
   ).then((r) => r.sessions);
+
+/** What a new session is for (task_kind.rs). */
+export type TaskKind = "research" | "plan";
 
 /** Per-session (and per-turn) composer selections beyond the harness itself. */
 export interface TurnOptions {
@@ -1906,7 +1914,7 @@ export interface TurnOptions {
 export const createChatSession = (
   projectId: string,
   harness: HarnessId,
-  opts: TurnOptions = {},
+  opts: TurnOptions & { kind?: TaskKind; referenceDirs?: string[] } = {},
 ) =>
   post<{ session: ChatSession }>("/api/chat/sessions", { projectId, harness, ...opts }).then(
     (r) => r.session,

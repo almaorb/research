@@ -6923,6 +6923,46 @@ struct CreateChatSessionReq {
     #[serde(default)]
     plan_mode: bool,
     reasoning_level: Option<String>,
+    /// What the session is for: `"research"` (a sourced report, no plan to
+    /// approve) or `"plan"` (an engineering plan); left out, as before.
+    kind: Option<String>,
+    /// Other folders the session reads beside its worktree (absolute paths).
+    #[serde(default)]
+    reference_dirs: Vec<String>,
+}
+
+/// The permission mode and Plan flag a new session starts with. Without a
+/// kind, what was asked. With one, an unset mode is the kind's: a research task
+/// runs unattended (auto), a plan waits for approval (Claude's plan permission,
+/// or the Plan flag on a harness that activates Plan as a command). A research
+/// task asked to start in Plan is refused: it would end in a plan card.
+fn session_mode(
+    kind: Option<local::task_kind::TaskKind>,
+    harness: &str,
+    permission_mode: Option<String>,
+    plan_mode: bool,
+) -> std::result::Result<(Option<String>, bool), String> {
+    use local::task_kind::TaskKind;
+    let Some(kind) = kind else {
+        return Ok((permission_mode, plan_mode));
+    };
+    let plan_asked = permission_mode.as_deref() == Some("plan") || plan_mode;
+    if kind == TaskKind::Research && plan_asked {
+        return Err(
+            "a research task runs without a plan: leave the permission mode unset or auto".into(),
+        );
+    }
+    if permission_mode.is_some() {
+        return Ok((permission_mode, plan_mode));
+    }
+    let wanted = kind.default_claude_permission();
+    if kind == TaskKind::Plan && local::harness::supports_command_plan(harness) {
+        return Ok((None, true));
+    }
+    let mode = local::harness::permission_mode_for(harness, wanted)
+        .is_some()
+        .then(|| wanted.to_string());
+    Ok((mode, plan_mode))
 }
 
 async fn create_chat_session(
@@ -6938,17 +6978,37 @@ async fn create_chat_session(
         .admit(&req.project_id)
         .ok_or_else(|| bad_request("project deletion is in progress"))?;
     let store = Store::open()?;
-    store
+    let project = store
         .get_local_project(&req.project_id)?
         .ok_or_else(|| not_found("project"))?;
     let nonempty = |s: Option<String>| s.filter(|v| !v.trim().is_empty());
-    let permission_mode = nonempty(req.permission_mode);
+    let kind = match nonempty(req.kind) {
+        Some(id) => Some(local::task_kind::TaskKind::from_id(&id).ok_or_else(|| {
+            bad_request("kind is \"research\" (a sourced report) or \"plan\" (an engineering plan)")
+        })?),
+        None => None,
+    };
+    let reference_dirs = local::task_kind::check_reference_dirs(
+        &req.reference_dirs,
+        std::path::Path::new(&project.repo_path),
+    )
+    .map_err(|e| bad_request(e.to_string()))?;
     let service_tier = nonempty(req.service_tier);
+    let (permission_mode, plan_mode) = session_mode(
+        kind,
+        &req.harness,
+        nonempty(req.permission_mode),
+        req.plan_mode,
+    )
+    .map_err(bad_request)?;
     if permission_mode
         .as_deref()
         .is_some_and(|mode| local::harness::permission_mode_for(&req.harness, mode).is_none())
     {
-        return Err(bad_request("invalid permission mode for selected harness"));
+        let valid = local::harness::permission_mode_ids(&req.harness).join(", ");
+        return Err(bad_request(format!(
+            "invalid permission mode for selected harness (this one takes: {valid})"
+        )));
     }
     if service_tier
         .as_deref()
@@ -6956,7 +7016,7 @@ async fn create_chat_session(
     {
         return Err(bad_request("invalid speed for selected harness"));
     }
-    if req.plan_mode && !local::harness::supports_command_plan(&req.harness) {
+    if plan_mode && !local::harness::supports_command_plan(&req.harness) {
         return Err(bad_request(
             "this harness activates Plan through permissions",
         ));
@@ -6971,7 +7031,7 @@ async fn create_chat_session(
         model: nonempty(req.model),
         service_tier,
         permission_mode,
-        plan_mode: req.plan_mode,
+        plan_mode,
         plan_reset_pending: false,
         reasoning_level: nonempty(req.reasoning_level),
         archived: false,
@@ -6979,6 +7039,8 @@ async fn create_chat_session(
         bootstrap_context: None,
         active_leaf_id: None,
         parent_session_id: None,
+        task_kind: kind.map(|k| k.id().to_string()),
+        reference_dirs: (!reference_dirs.is_empty()).then(|| json!(reference_dirs).to_string()),
         created_at: now_ms(),
         updated_at: now_ms(),
     };
@@ -7858,6 +7920,32 @@ pub(crate) async fn spa(uri: Uri) -> Response {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_session_starts_in_the_mode_its_kind_needs() {
+        use crate::local::task_kind::TaskKind;
+        let mode = |kind, permission: Option<&str>| {
+            super::session_mode(kind, "claude-code", permission.map(str::to_string), false)
+        };
+        // Research runs unattended; a plan waits for approval.
+        assert_eq!(
+            mode(Some(TaskKind::Research), None),
+            Ok((Some("auto".into()), false))
+        );
+        assert_eq!(
+            mode(Some(TaskKind::Plan), None),
+            Ok((Some("plan".into()), false))
+        );
+        // A research task may not start in Plan.
+        assert!(mode(Some(TaskKind::Research), Some("plan")).is_err());
+        // A mode asked for wins; no kind is as before.
+        assert_eq!(
+            mode(Some(TaskKind::Research), Some("manual")),
+            Ok((Some("manual".into()), false))
+        );
+        assert_eq!(mode(None, Some("plan")), Ok((Some("plan".into()), false)));
+        assert_eq!(mode(None, None), Ok((None, false)));
+    }
     #[test]
     fn ssh_include_globs_match_like_ssh() {
         assert!(super::glob_matches(b"*.conf", b"fleet.conf"));

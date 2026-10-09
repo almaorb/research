@@ -541,6 +541,8 @@ impl Store {
             "ALTER TABLE chat_messages ADD COLUMN result_native_session_id TEXT",
             "ALTER TABLE chat_sessions ADD COLUMN active_leaf_id TEXT",
             "ALTER TABLE chat_sessions ADD COLUMN parent_session_id TEXT",
+            "ALTER TABLE chat_sessions ADD COLUMN task_kind TEXT",
+            "ALTER TABLE chat_sessions ADD COLUMN reference_dirs TEXT",
             "ALTER TABLE ui_state ADD COLUMN preferred_service_tier TEXT",
             "ALTER TABLE ui_state ADD COLUMN workspace_state_json TEXT",
             "ALTER TABLE chat_spawns ADD COLUMN wake_parent INTEGER NOT NULL DEFAULT 1",
@@ -1466,8 +1468,8 @@ impl Store {
                                             title_source, model, service_tier, permission_mode, plan_mode,
                                             plan_reset_pending, reasoning_level,
                                             archived, context_usage_json, bootstrap_context,
-                                            active_leaf_id, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                                            active_leaf_id, created_at, updated_at, task_kind, reference_dirs)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
                 params![
                     session.id,
                     session.project_id,
@@ -1487,6 +1489,8 @@ impl Store {
                     session.active_leaf_id,
                     session.created_at,
                     session.updated_at,
+                    session.task_kind,
+                    session.reference_dirs,
                 ],
             )?;
         }
@@ -1693,8 +1697,8 @@ impl Store {
         self.conn.execute(
             "INSERT INTO chat_sessions (id, project_id, harness, native_session_id, title, title_source, model,
                                         service_tier, permission_mode, plan_mode, plan_reset_pending, reasoning_level, archived, bootstrap_context,
-                                        active_leaf_id, parent_session_id, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                                        active_leaf_id, parent_session_id, created_at, updated_at, task_kind, reference_dirs)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             params![
                 s.id,
                 s.project_id,
@@ -1714,6 +1718,8 @@ impl Store {
                 s.parent_session_id,
                 s.created_at,
                 s.updated_at,
+                s.task_kind,
+                s.reference_dirs,
             ],
         )?;
         Ok(())
@@ -2759,6 +2765,10 @@ pub struct StoredChatSession {
     /// Session that spawned this one with `orx agent spawn`. `None` for
     /// sessions the user started from the dashboard.
     pub parent_session_id: Option<String>,
+    /// What the session is for (`"research"` / `"plan"`, task_kind.rs); None = as before.
+    pub task_kind: Option<String>,
+    /// Other folders the session reads beside its worktree (JSON list of absolute paths).
+    pub reference_dirs: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -2906,7 +2916,8 @@ fn row_to_chat_turn(
 
 const CHAT_SESSION_COLS: &str = "id, project_id, harness, native_session_id, title, model, service_tier, \
      permission_mode, plan_mode, plan_reset_pending, reasoning_level, archived, context_usage_json, \
-     created_at, updated_at, title_source, bootstrap_context, active_leaf_id, parent_session_id";
+     created_at, updated_at, title_source, bootstrap_context, active_leaf_id, parent_session_id, \
+     task_kind, reference_dirs";
 
 fn row_to_chat_spawn(row: &rusqlite::Row<'_>) -> std::result::Result<ChatSpawn, rusqlite::Error> {
     Ok(ChatSpawn {
@@ -2942,6 +2953,8 @@ fn row_to_chat_session(
         bootstrap_context: row.get(16)?,
         active_leaf_id: row.get(17)?,
         parent_session_id: row.get(18)?,
+        task_kind: row.get(19)?,
+        reference_dirs: row.get(20)?,
     })
 }
 
@@ -3957,6 +3970,8 @@ mod tests {
             bootstrap_context: None,
             active_leaf_id: None,
             parent_session_id: None,
+            task_kind: None,
+            reference_dirs: None,
             created_at: 1,
             updated_at: 1,
         }

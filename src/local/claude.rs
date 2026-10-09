@@ -132,6 +132,11 @@ pub struct SpawnConfig {
     /// mode + a bound `orx up` port + a successful config write). A plan turn
     /// that wanted the bridge but got `false` respawns next turn to try again.
     pub bridge_active: bool,
+    /// Folders beside the worktree the child may use (`--add-dir`): the
+    /// session's reference folders, and a research task's artifacts folder.
+    pub extra_dirs: Vec<PathBuf>,
+    /// Those of `extra_dirs` it may only read: edits there are denied.
+    pub read_only_dirs: Vec<PathBuf>,
 }
 
 /// Everything needed to spawn (or respawn) a session's child, built per turn by
@@ -497,6 +502,13 @@ async fn spawn_client(spec: &SpawnSpec, auth_generation: u64) -> Result<Arc<Clau
     if let Some(native_id) = &spec.resume {
         cmd.args(["--resume", native_id]);
     }
+    for dir in &spec.config.extra_dirs {
+        cmd.arg("--add-dir").arg(dir);
+    }
+    let denied = read_only_rules(&spec.config.read_only_dirs);
+    if !denied.is_empty() {
+        cmd.arg("--disallowedTools").args(denied);
+    }
 
     // Plan-mode extras, iff the child was spawned in Plan. `bridge_active` on the
     // config records what we ACHIEVED, not what we wanted: forced false here, set
@@ -635,6 +647,21 @@ pub enum ChildAction {
     Respawn,
 }
 
+/// The permission rules that keep a folder read-only for the child: every
+/// editing tool denied under it. Claude Code writes an absolute path in a rule
+/// with a leading `//`.
+pub fn read_only_rules(dirs: &[PathBuf]) -> Vec<String> {
+    let mut out = Vec::new();
+    for dir in dirs {
+        let path = dir.to_string_lossy();
+        let path = path.trim_end_matches('/');
+        for tool in ["Edit", "Write", "MultiEdit", "NotebookEdit"] {
+            out.push(format!("{tool}(/{path}/**)"));
+        }
+    }
+    out
+}
+
 /// Pure reuse/respawn decision (unit-tested). `current` is the running child's
 /// config, `wanted` the turn's.
 pub fn child_action(current: &SpawnConfig, wanted: &SpawnConfig) -> ChildAction {
@@ -643,6 +670,8 @@ pub fn child_action(current: &SpawnConfig, wanted: &SpawnConfig) -> ChildAction 
         || current.effort != wanted.effort
         || current.bridge_active != wanted.bridge_active
         || current.native_store != wanted.native_store
+        || current.extra_dirs != wanted.extra_dirs
+        || current.read_only_dirs != wanted.read_only_dirs
     {
         return ChildAction::Respawn;
     }
@@ -1153,7 +1182,22 @@ mod tests {
             model: model.map(str::to_string),
             native_store: NativeStore::Isolated,
             bridge_active: bridge,
+            extra_dirs: Vec::new(),
+            read_only_dirs: Vec::new(),
         }
+    }
+
+    #[test]
+    fn reference_folders_are_read_only_and_a_change_respawns() {
+        let rules = read_only_rules(&[PathBuf::from("/Users/m/code/dishorb/")]);
+        assert_eq!(rules[0], "Edit(//Users/m/code/dishorb/**)");
+        assert_eq!(rules.len(), 4);
+        assert!(rules.iter().any(|r| r.starts_with("Write(")));
+        let base = cfg(Some(PermissionMode::Auto), None, None, false);
+        let mut wider = base.clone();
+        wider.extra_dirs.push(PathBuf::from("/files/p"));
+        assert_eq!(child_action(&base, &wider), ChildAction::Respawn);
+        assert_eq!(child_action(&wider, &wider.clone()), ChildAction::Reuse);
     }
 
     #[test]

@@ -152,6 +152,12 @@ fn spawn(
         bootstrap_context: None,
         active_leaf_id: None,
         parent_session_id: Some(parent_id.clone()),
+        // A helper researches for its parent: a research parent's helper is
+        // research too, and a planning parent's helper researches (it may not
+        // plan, as above). It reads the same reference folders.
+        task_kind: crate::local::task_kind::of(parent.task_kind.as_deref())
+            .map(|_| crate::local::task_kind::TaskKind::Research.id().to_string()),
+        reference_dirs: parent.reference_dirs.clone(),
         created_at: now_ms(),
         updated_at: now_ms(),
     };
@@ -202,6 +208,8 @@ mod tests {
             bootstrap_context: None,
             active_leaf_id: None,
             parent_session_id: parent_session_id.map(str::to_string),
+            task_kind: None,
+            reference_dirs: None,
             created_at: 1,
             updated_at: 1,
         }

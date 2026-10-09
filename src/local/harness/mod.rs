@@ -428,6 +428,19 @@ pub fn permission_mode_for(harness_id: &str, id: &str) -> Option<PermissionMode>
         .flatten()
 }
 
+/// The permission-mode ids a harness takes, for error messages.
+pub fn permission_mode_ids(harness_id: &str) -> Vec<String> {
+    chat_harness(harness_id)
+        .map(|h| {
+            h.options()
+                .permission_modes
+                .iter()
+                .map(|choice| choice.id.to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// The valid wire id to expose for a session. Unknown/stale values fall back to
 /// the harness default instead of leaving the composer on an impossible mode.
 pub fn effective_permission_id(harness_id: &str, stored: Option<&str>) -> Option<String> {
